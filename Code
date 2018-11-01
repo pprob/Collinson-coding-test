@@ -1,0 +1,135 @@
+'''Collinson coding test '''
+
+# Importing libraries
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+# Importing the dataset
+dataset_raw = pd.read_excel('tweets.xlsx')
+list_cols = list(dataset_raw.columns.values)
+print(dataset_raw.isnull().sum())
+dataset_raw.describe()
+
+# Datatypes
+types = dataset_raw.columns.to_series().groupby(dataset_raw.dtypes).groups
+print(types)
+dataset_raw.dtypes
+
+# Data cleanup for model
+# Dropping columns with large null values
+drop_nulls = ['TweetInReplyToStatusID', 'TweetInReplyToUserID', 'TweetInReplyToScreenName', 'TweetPlaceID',
+              'TweetPlaceName', 'TweetPlaceFullName', 'TweetCountry', 'TweetPlaceBoundingBox', 'TweetPlaceAttributes',
+              'TweetPlaceContainedWithin', 'UserLocation', 'UserDescription', 'UserLink', 'UserExpandedLink',
+              'tweet.place']
+dataset = dataset_raw.drop(drop_nulls, axis = 1)
+print(dataset.columns.values) 
+print(dataset.isnull().sum()) 
+
+
+# Fill missing values
+for data in dataset:
+    dataset['TweetHashtags'].fillna(0, inplace = True)
+print(dataset['TweetHashtags'].isnull().sum())
+
+# Convert boolean to 0 & 1
+dataset['TweetRetweetFlag'] = dataset['TweetRetweetFlag'].astype(int)
+
+# Dropping unnecessary data for model
+print(dataset.columns.values) 
+drop_cols = ['TweetID', 'TweetSource', 'UserID', 'UserName', 'UserScreenName',
+             'UserSignupDate', 'MacroIterationNumber']
+df = dataset.drop(drop_cols, axis = 1)
+
+# Creating dataframe with original tweets only
+df = df[(df['TweetRetweetFlag'] == 0)]
+
+# Skewed dataset. Most tweets do not have retweets. 
+(df['TweetRetweetCount'] == 0).value_counts() # 2022 retweeted tweets, 13484 tweets untweeted
+
+plt.hist(x = df['TweetRetweetCount'], bins = 20, color = 'b', label = 'Retweet count')
+plt.title('Histogram showing skewness of dataset')
+plt.xlabel('Retweet count')
+plt.ylabel('Frequency')
+
+# Getting 50/50 retweeted/not retweeted in sample size for model due to skewness
+df_retweet = df[df['TweetRetweetCount'] > 0 ]
+df_0_retweet = df[df['TweetRetweetCount'] < 1]
+df_0_retweet.sample(frac = 1)
+df_0_retweet_resample = df_0_retweet[:2022]
+
+# Model dataframe
+df_model = pd.concat([df_retweet, df_0_retweet_resample], axis = 0)
+print(df_model.describe())
+# Mean of 8, 75th percentile is 1, high disparity
+
+"""# Count vectorizing hashtags - Gives worse results
+tht = df_model['TweetHashtags']
+df_model['TweetHashtags'] = df_model['TweetHashtags'].astype(str)
+from sklearn.feature_extraction.text import CountVectorizer
+cvec = CountVectorizer(max_features = 1500)
+test = cvec.fit_transform(tht).toarray()"""
+
+# Splitting dataset into features and label
+y = df_model['TweetRetweetCount']
+X = df_model.drop(['TweetPostedTime', 'TweetBody', 'TweetRetweetFlag', 'TweetRetweetCount',
+             'TweetHashtags'], axis = 1)
+
+"""X = X.iloc[:, :].values""" # If vectorising text
+# Concat vectorized hashtags with X
+"""X = np.concatenate((X, test), axis = 1)"""
+# Random sampling train/test set
+from sklearn.model_selection import train_test_split
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size = 0.25, random_state = 0)
+
+"""Don't have to scale for regression but can impact computing times for SVM on larger datasets
+from sklearn.preprocessing import StandardScaler
+sc = StandardScaler()
+X_train = standardscaler_X.fit_transform(X_train)
+X_test = standardscaler_X.transform(X_test)"""
+
+
+linear_correlation_matrix = df_model.corr()
+linear_correlation_matrix['TweetRetweetCount'].sort_values(ascending = False) # Very low linear correlation apart from favourites count
+
+#plots of standout features from correlation matrix
+plt.scatter(df_model['UserFollowersCount'], df_model['TweetRetweetCount'])
+plt.xlabel('Follower count of original tweeter')
+plt.ylabel('Retweet count')
+plt.title('Follower count vs retweet count')
+
+plt.scatter(df_model['TweetFavoritesCount'], df_model['TweetRetweetCount'])
+plt.xlabel('Favorites tweet receieved')
+plt.ylabel('Retweet count')
+plt.title('Number of favorites vs retweet count')
+
+# Fitting linear model (OLS) to data, prediction and measuring MSE
+from sklearn.linear_model import LinearRegression
+lin_regressor = LinearRegression() 
+lin_regressor.fit(X_train, y_train)
+
+lin_y_pred = lin_regressor.predict(X_test)
+
+from sklearn.metrics import mean_squared_error
+lin_mse = mean_squared_error(y_test, lin_y_pred)
+lin_rmse = np.sqrt(lin_mse)
+print(lin_rmse)
+
+# Fitting random forest model to data
+from sklearn.ensemble import RandomForestRegressor
+rf_regressor = RandomForestRegressor()
+rf_regressor.fit(X_train, y_train)
+
+rf_y_pred = rf_regressor.predict(X_test)
+rf_mse = mean_squared_error(y_test, rf_y_pred)
+rf_rmse = np.sqrt(rf_mse)
+print(rf_rmse)
+
+from sklearn.model_selection import GridSearchCV
+
+
+"""improvements include using grid search CV, count vectorizing tweet body, using larger dataset, hyperparameter optimisation,
+plotting data point vs MSE for training instances and test instances to measure whether model is overfitting/underfitting,
+use time as a feature as there may be a relationship between time of original tweet and number of retweets,
+Because of the skewed dataset, low error because most of sampled dataset hasn't been retweeted (0), could resample again to 
+get less samples of non-retweeted tweets in training/test data"""
